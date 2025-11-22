@@ -25,13 +25,14 @@ jobs:
           import requests
           import json
           import sys
+          import os
 
           API_URL = "https://api.moneyslastexam.com/attempts/"
-          
+
           try:
               # Fetch the list of objects from your endpoint
               response = requests.get(API_URL)
-              response.raise_for_status() 
+              response.raise_for_status()
               data = response.json()
 
               # We need to output the full list of objects to the matrix.
@@ -46,17 +47,16 @@ jobs:
 
               # Convert the list to a JSON string and output it for the next job
               matrix_json = json.dumps(build_matrix)
-              
-              # Set the output variable for the next job
-              print(f"::set-output name=build_matrix::{matrix_json}")
+
+              # Set the output variable for the next job using environment file
+              with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
+                  f.write(f"build_matrix={matrix_json}\n")
 
           except requests.RequestException as e:
               print(f"Error fetching data from API: {e}", file=sys.stderr)
               sys.exit(1)
           
           EOF
-
----
 
   # Job 2: Run parallel builds using the matrix
   build_and_push:
