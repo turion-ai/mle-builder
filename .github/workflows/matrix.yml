@@ -33,21 +33,8 @@ jobs:
               # Fetch the list of objects from your endpoint
               response = requests.get(API_URL)
               response.raise_for_status()
-              data = response.json()
-
-              # We need to output the full list of objects to the matrix.
-              # Each object contains the arch (for tagging) and the code (for content injection).
-              build_matrix = []
-              for item in data:
-                  build_matrix.append({
-                      "arch_name": item["arch"], # Used for the unique tag
-                      "code_content": item["code"], # Used for the main.py file
-                      "tag_suffix": item.get("tag", "latest") # Optional: include other data
-                  })
-
-              # Convert the list to a JSON string and output it for the next job
-              matrix_json = json.dumps(build_matrix)
-
+              matrix_json = response.json()
+              
               # Set the output variable for the next job using environment file
               with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
                   f.write(f"build_matrix={matrix_json}\n")
@@ -67,7 +54,6 @@ jobs:
     strategy:
       fail-fast: false # Allows all builds to complete even if one fails
       matrix:
-        # matrix_item will be one object: {"arch_name": "...", "code_content": "..."}
         matrix_item: ${{ fromJson(needs.fetch_data.outputs.build_matrix) }}
 
     steps:
@@ -86,15 +72,15 @@ jobs:
         shell: bash
         env:
           # Use the 'code_content' from the current matrix item
-          DYNAMIC_CODE: ${{ matrix.matrix_item.code_content }}
+          DYNAMIC_CODE: ${{ matrix.matrix_item.code }}
         run: |
           # Create the full path for the main.py file based on your repo structure
           MAIN_FILE_PATH="backend/app/main.py"
           
-          # The DYNAMIC_CODE variable contains the Python code from the API.
-          # We use `echo -e` to handle multi-line content and write it to the file.
-          echo -e "$DYNAMIC_CODE" > "$MAIN_FILE_PATH"
-          echo "Successfully wrote dynamic code to $MAIN_FILE_PATH for build ${{ matrix.matrix_item.arch_name }}"
+          # The DYNAMIC_CODE variable contains base64-encoded Python code from the API.
+          # Decode and write it to the file.
+          echo "$DYNAMIC_CODE" | base64 -d > "$MAIN_FILE_PATH"
+          echo "Successfully wrote dynamic code to $MAIN_FILE_PATH for build ${{ matrix.matrix_item.arch }}"
 
       - name: Build and Push Docker image
         uses: docker/build-push-action@v5
@@ -102,6 +88,5 @@ jobs:
           context: .
           file: ./backend/Dockerfile
           push: true
-          # Use the 'arch_name' from the current matrix item for the unique tag
-          tags: fordnox/moneyslastexam/${{ matrix.matrix_item.arch_name }}:latest
+          tags: fordnox/moneyslastexam_${{ matrix.matrix_item.arch }}:latest
           cache-from: type=gha # Use GitHub Actions caching
