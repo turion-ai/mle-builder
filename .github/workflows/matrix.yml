@@ -82,11 +82,15 @@ jobs:
           echo "$DYNAMIC_CODE" | base64 -d > "$MAIN_FILE_PATH"
           echo "Successfully wrote dynamic code to $MAIN_FILE_PATH for build ${{ matrix.matrix_item.arch }}"
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Build and Push Docker image
         uses: docker/build-push-action@v5
         with:
-          context: .
+          context: ./backend
           file: ./backend/Dockerfile
           push: true
           tags: fordnox/moneyslastexam_${{ matrix.matrix_item.arch }}:latest
-          cache-from: type=gha # Use GitHub Actions caching
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
