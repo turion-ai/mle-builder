@@ -1,0 +1,107 @@
+name: Dynamic API Image Builder
+
+on:
+  workflow_dispatch: # Use manual trigger for controlled runs
+
+jobs:
+  # Job 1: Fetch data from the API and set up the matrix
+  fetch_data:
+    runs-on: ubuntu-latest
+    outputs:
+      build_matrix: ${{ steps.get_matrix.outputs.build_matrix }}
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies (requests for API call)
+        run: pip install requests
+
+      - name: Fetch and Prepare Matrix Data
+        id: get_matrix
+        run: |
+          python - <<EOF
+          import requests
+          import json
+          import sys
+
+          API_URL = "https://api.moneyslastexam.com/attempts/"
+          
+          try:
+              # Fetch the list of objects from your endpoint
+              response = requests.get(API_URL)
+              response.raise_for_status() 
+              data = response.json()
+
+              # We need to output the full list of objects to the matrix.
+              # Each object contains the arch (for tagging) and the code (for content injection).
+              build_matrix = []
+              for item in data:
+                  build_matrix.append({
+                      "arch_name": item["arch"], # Used for the unique tag
+                      "code_content": item["code"], # Used for the main.py file
+                      "tag_suffix": item.get("tag", "latest") # Optional: include other data
+                  })
+
+              # Convert the list to a JSON string and output it for the next job
+              matrix_json = json.dumps(build_matrix)
+              
+              # Set the output variable for the next job
+              print(f"::set-output name=build_matrix::{matrix_json}")
+
+          except requests.RequestException as e:
+              print(f"Error fetching data from API: {e}", file=sys.stderr)
+              sys.exit(1)
+          
+          EOF
+
+---
+
+  # Job 2: Run parallel builds using the matrix
+  build_and_push:
+    needs: fetch_data # Depends on the data being fetched
+    runs-on: ubuntu-latest
+
+    # Configure the matrix strategy using the output from the first job
+    strategy:
+      fail-fast: false # Allows all builds to complete even if one fails
+      matrix:
+        # matrix_item will be one object: {"arch_name": "...", "code_content": "..."}
+        matrix_item: ${{ fromJson(needs.fetch_data.outputs.build_matrix) }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # You must use a secret token for registry login
+      - name: Log in to Container Registry (e.g., Docker Hub)
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # --- Critical Step: Dynamic Content Generation ---
+      - name: Inject Dynamic Code into main.py
+        shell: bash
+        env:
+          # Use the 'code_content' from the current matrix item
+          DYNAMIC_CODE: ${{ matrix.matrix_item.code_content }}
+        run: |
+          # Create the full path for the main.py file based on your repo structure
+          MAIN_FILE_PATH="backend/app/main.py"
+          
+          # The DYNAMIC_CODE variable contains the Python code from the API.
+          # We use `echo -e` to handle multi-line content and write it to the file.
+          echo -e "$DYNAMIC_CODE" > "$MAIN_FILE_PATH"
+          echo "Successfully wrote dynamic code to $MAIN_FILE_PATH for build ${{ matrix.matrix_item.arch_name }}"
+
+      - name: Build and Push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./backend/Dockerfile
+          push: true
+          # Use the 'arch_name' from the current matrix item for the unique tag
+          tags: fordnox/moneyslastexam/${{ matrix.matrix_item.arch_name }}:latest
+          cache-from: type=gha # Use GitHub Actions caching
